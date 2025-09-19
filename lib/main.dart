@@ -12,6 +12,7 @@ import 'api.dart';
 import 'prompt_dialog.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
