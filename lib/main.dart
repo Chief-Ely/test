@@ -4,14 +4,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'dart:typed_data';
-import 'package:record/record.dart';
+import 'package:record/record.dart'; // v5.1.2
 import 'api.dart';
 import 'prompt_dialog.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
   runApp(const MyApp());
 }
 
@@ -34,13 +32,12 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final AudioRecorder _recorder = AudioRecorder();
+  final AudioRecorder _recorder = AudioRecorder(); // ✅ concrete recorder
   final ScrollController _scrollController = ScrollController();
   final List<String> _lines = [];
   StreamSubscription<String>? _wsSub;
   StreamSubscription<Uint8List>? _micSub;
   bool _isRecording = false;
-  bool _isConnecting = false;
 
   @override
   void initState() {
@@ -50,7 +47,6 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _lines.add(msg);
       });
-      // auto-scroll
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       });
@@ -66,12 +62,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openWsPrompt() async {
-    await showWsPromptDialog(context); // your prompt_dialog (connects inside)
+    await showWsPromptDialog(context);
   }
 
   Future<void> _startRecording() async {
     final status = await Permission.microphone.request();
-
     if (!status.isGranted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Microphone permission denied')),
@@ -108,7 +103,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-
   Future<void> _stopRecording() async {
     try {
       await _recorder.stop();
@@ -120,24 +114,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void listener(dynamic obj) {
-    if (obj is Float32List) {
-      // Convert Float32List PCM -> Int16 PCM -> Uint8List
-      final buffer = Int16List(obj.length);
-      for (int i = 0; i < obj.length; i++) {
-        final v = (obj[i] * 32767).clamp(-32768, 32767).toInt();
-        buffer[i] = v;
-      }
-      final bytes = Uint8List.view(buffer.buffer);
-      Api.sendAudioChunk(bytes);
-    }
-  }
-
-  void onError(Object e) {
-    Api.transcriptStream.add('[mic] error: $e');
-  }
-
-  // This toggles recording
   Future<void> _toggleRecording() async {
     if (_isRecording) {
       await _stopRecording();
@@ -146,7 +122,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  // Quick connect/disconnect button (optional)
   Future<void> _disconnectWs() async {
     Api.disconnect();
     Api.transcriptStream.add('[ws] manual disconnect');
@@ -198,7 +173,6 @@ class _HomePageState extends State<HomePage> {
                   itemCount: _lines.length,
                   itemBuilder: (context, i) {
                     final line = _lines[i];
-                    // Try to highlight JSON-partials (optional)
                     return SelectableText(line);
                   },
                 ),
@@ -217,7 +191,6 @@ class _HomePageState extends State<HomePage> {
                 ElevatedButton(
                   onPressed: () {
                     final text = _lines.join('\n');
-                    // copy to clipboard or show share UI — omitted for brevity
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('Transcript copied (not implemented)'),
