@@ -4,7 +4,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:mic_stream/mic_stream.dart';
+import 'dart:typed_data';
+import 'package:flutter_audio_capture/flutter_audio_capture.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'api.dart';
 import 'prompt_dialog.dart';
@@ -32,6 +34,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  final FlutterAudioCapture _audioRecorder = FlutterAudioCapture();
   final ScrollController _scrollController = ScrollController();
   final List<String> _lines = [];
   StreamSubscription<String>? _wsSub;
@@ -67,7 +70,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _startRecording() async {
-    // Request permission
     final status = await Permission.microphone.request();
     if (!status.isGranted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -84,30 +86,15 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
-      // mic_stream: await the microphone stream factory (this is important!)
-      final Stream<Uint8List>? stream = await MicStream.microphone(
+      await _audioRecorder.start(
+        listener,
+        onError,
         sampleRate: 16000,
-        // optional: you can specify audioFormat or channel config via parameters if needed
+        bufferSize: 3000,
       );
-
-      if (stream == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Unable to open microphone stream')),
-        );
-        return;
-      }
-
-      // subscribe and forward each chunk directly to Api.sendAudioChunk
-      _micSub = stream.listen((Uint8List chunk) {
-        // chunk is raw PCM bytes (platform dependent) — your backend expects PCM at 16kHz
-        Api.sendAudioChunk(chunk);
-      }, onError: (err) {
-        Api.transcriptStream.add('[mic] error: $err');
-      }, cancelOnError: true);
 
       setState(() => _isRecording = true);
       Api.transcriptStream.add('[mic] recording started');
-
     } catch (e) {
       Api.transcriptStream.add('[mic] start failed: $e');
     }
@@ -115,13 +102,29 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _stopRecording() async {
     try {
-      await _micSub?.cancel();
-      _micSub = null;
+      await _audioRecorder.stop();
       setState(() => _isRecording = false);
       Api.transcriptStream.add('[mic] recording stopped');
     } catch (e) {
       Api.transcriptStream.add('[mic] stop failed: $e');
     }
+  }
+
+  void listener(dynamic obj) {
+    if (obj is Float32List) {
+      // Convert Float32List PCM -> Int16 PCM -> Uint8List
+      final buffer = Int16List(obj.length);
+      for (int i = 0; i < obj.length; i++) {
+        final v = (obj[i] * 32767).clamp(-32768, 32767).toInt();
+        buffer[i] = v;
+      }
+      final bytes = Uint8List.view(buffer.buffer);
+      Api.sendAudioChunk(bytes);
+    }
+  }
+
+  void onError(Object e) {
+    Api.transcriptStream.add('[mic] error: $e');
   }
 
   // This toggles recording
@@ -168,7 +171,10 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('WebSocket: $connectedUrl', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              'WebSocket: $connectedUrl',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             Expanded(
               child: Container(
@@ -202,7 +208,11 @@ class _HomePageState extends State<HomePage> {
                   onPressed: () {
                     final text = _lines.join('\n');
                     // copy to clipboard or show share UI — omitted for brevity
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Transcript copied (not implemented)')));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Transcript copied (not implemented)'),
+                      ),
+                    );
                   },
                   child: const Text('Copy'),
                 ),
