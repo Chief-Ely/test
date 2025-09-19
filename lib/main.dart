@@ -1,11 +1,10 @@
+// lib/main.dart
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:mic_stream/mic_stream.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
 import 'api.dart';
 import 'prompt_dialog.dart';
-
 
 void main() {
   runApp(const MyApp());
@@ -13,11 +12,12 @@ void main() {
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: "Live Transcription",
+      title: 'Live Transcription',
+      theme: ThemeData(primarySwatch: Colors.blue),
       home: const HomePage(),
     );
   }
@@ -25,108 +25,108 @@ class MyApp extends StatelessWidget {
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
+
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  final ApiService _api = ApiService();
-  String _transcript = "";
-  bool _connected = false;
-  StreamSubscription? _wsSub;
-  StreamSubscription? _micSub;
-  bool _micOn = false;
+  final AudioRecorder _recorder = AudioRecorder();
+  final TextEditingController _outputController = TextEditingController();
+
   bool _isRecording = false;
+  StreamSubscription<String>? _transcriptSub;
 
-
-  Future<void> _setWsUrl() async {
-    final url = await askForWsUrl(context);
-    if (url != null && url.isNotEmpty) {
-      _api.setWsUrl(url);
-      _api.connect();
-
-      _wsSub = _api.listenTranscription()?.listen((msg) {
-        setState(() {
-          _transcript += "\n$msg";
-        });
+  @override
+  void initState() {
+    super.initState();
+    // Subscribe to transcript stream
+    _transcriptSub = Api.transcriptStream.stream.listen((msg) {
+      setState(() {
+        _outputController.text += "$msg\n";
       });
-
-      setState(() => _connected = true);
-    }
-  }
-
-  void _disconnect() {
-    _wsSub?.cancel();
-    _micSub?.cancel();
-    _api.close();
-    setState(() {
-      _connected = false;
-      _micOn = false;
-      _transcript = "";
     });
   }
 
-  Future<void> _toggleMic() async {
+  Future<void> _toggleRecording() async {
     if (_isRecording) {
-      // Stop recording
-      await _micSub?.cancel();
-      _micSub = null;
+      // stop recording
+      await _recorder.stop();
+      Api.disconnect();
+      setState(() => _isRecording = false);
     } else {
-      // Start recording
-      Stream<Uint8List>? stream = await MicStream.microphone(
-        audioSource: AudioSource.MIC,
-        sampleRate: 16000,
-        channelConfig: ChannelConfig.CHANNEL_IN_MONO,
-        audioFormat: AudioFormat.ENCODING_PCM_16BIT,
+      // ask for WebSocket link
+      await showWsPromptDialog(context);
+      if (Api.currentUrl == null) return;
+
+      if (!await _recorder.hasPermission()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Microphone permission not granted")),
+        );
+        return;
+      }
+
+      final stream = await _recorder.startStream(
+        const RecordConfig(
+          encoder: AudioEncoder.pcm16bits,
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
       );
 
-      if (stream != null) {
-        _micSub = stream.listen((Uint8List data) {
-          _api.sendAudioChunk(data); // ✅ send to WebSocket
-        });
-      }
+      stream.listen((Uint8List data) {
+        Api.sendAudioChunk(data);
+      });
+
+      setState(() => _isRecording = true);
     }
-
-    setState(() {
-      _isRecording = !_isRecording;
-    });
   }
-
-
 
   @override
   void dispose() {
-    _wsSub?.cancel();
-    _micSub?.cancel();
-    _api.close();
+    _recorder.dispose();
+    _outputController.dispose();
+    _transcriptSub?.cancel();
+    Api.disconnect();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Live Transcription")),
+      appBar: AppBar(
+        title: const Text("Live Transcription"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.link),
+            onPressed: () async {
+              await showWsPromptDialog(context);
+            },
+          ),
+        ],
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            ElevatedButton(
-              onPressed: _connected ? _disconnect : _setWsUrl,
-              child: Text(_connected ? "Disconnect" : "Set WebSocket URL"),
+            Expanded(
+              child: TextField(
+                controller: _outputController,
+                maxLines: null,
+                decoration: const InputDecoration(
+                  labelText: "Transcriptions",
+                  border: OutlineInputBorder(),
+                ),
+              ),
             ),
             const SizedBox(height: 16),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Text(_transcript),
-              ),
+            ElevatedButton.icon(
+              icon: Icon(_isRecording ? Icons.stop : Icons.mic),
+              label: Text(_isRecording ? "Stop" : "Start"),
+              onPressed: _toggleRecording,
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _toggleMic,
-        backgroundColor: _micOn ? Colors.red : Colors.blue,
-        child: Icon(_micOn ? Icons.stop : Icons.mic),
       ),
     );
   }

@@ -1,28 +1,54 @@
+// lib/prompt_dialog.dart
 import 'package:flutter/material.dart';
+import 'api.dart';
 
-Future<String?> askForWsUrl(BuildContext context) async {
-  final controller = TextEditingController();
+Future<void> showWsPromptDialog(BuildContext context) async {
+  final controller = TextEditingController(text: Api.currentUrl ?? '');
+  final formKey = GlobalKey<FormState>();
 
-  return showDialog<String>(
+  await showDialog(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text("Enter WebSocket URL"),
-      content: TextField(
-        controller: controller,
-        decoration: const InputDecoration(
-          hintText: "wss://example.ngrok-free.app/live",
+    builder: (ctx) {
+      return AlertDialog(
+        title: Text('Set WebSocket URL'),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: 'e.g. ws://your-ngrok-url/live or https://.../live',
+            ),
+            validator: (v) {
+              if (v == null || v.trim().isEmpty) return 'Please enter a URL';
+              return null;
+            },
+          ),
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text("Cancel"),
-        ),
-        ElevatedButton(
-          onPressed: () => Navigator.pop(context, controller.text),
-          child: const Text("Connect"),
-        ),
-      ],
-    ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (formKey.currentState?.validate() ?? false) {
+                final url = controller.text.trim();
+                Navigator.of(ctx).pop();
+                try {
+                  await Api.connect(url);
+                } catch (e) {
+                  // If connect fails, show a snackbar
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Connect failed: $e')),
+                  );
+                }
+              }
+            },
+            child: Text('Connect'),
+          ),
+        ],
+      );
+    },
   );
 }
