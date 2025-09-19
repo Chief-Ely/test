@@ -2,14 +2,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:web_socket_channel/io.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 class Api {
-  static IOWebSocketChannel? _channel;
-  static final StreamController<String> transcriptStream = StreamController<String>.broadcast();
+  static WebSocketChannel? _channel;
+  static final StreamController<String> transcriptStream =
+      StreamController<String>.broadcast();
   static String? currentUrl;
 
-  /// Normalize common http/https => ws/wss
   static String _normalizeUrl(String url) {
     url = url.trim();
     if (url.startsWith('http://')) return url.replaceFirst('http://', 'ws://');
@@ -18,13 +18,12 @@ class Api {
     return 'ws://$url';
   }
 
-  /// Connect to the websocket. Listens and emits messages to transcriptStream.
   static Future<void> connect(String url) async {
     final wsUrl = _normalizeUrl(url);
     currentUrl = wsUrl;
     try {
       disconnect();
-      _channel = IOWebSocketChannel.connect(Uri.parse(wsUrl));
+      _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       _channel!.stream.listen((message) {
         _handleMessage(message);
       }, onDone: () {
@@ -58,27 +57,21 @@ class Api {
       text = message.toString();
     }
 
-    // Try parse JSON from Vosk-like messages: {"partial":"...", "text":"..."}
     try {
       final obj = json.decode(text);
       if (obj is Map<String, dynamic>) {
         if (obj.containsKey('text')) {
-          // final chunk
           transcriptStream.add(obj['text']?.toString() ?? '');
           return;
         } else if (obj.containsKey('partial')) {
-          // partial: forward it (UI will combine partial+final)
           transcriptStream.add(json.encode({'partial': obj['partial'] ?? ''}));
           return;
         }
       }
-    } catch (_) {
-      // not JSON, just forward
-    }
+    } catch (_) {}
     transcriptStream.add(text);
   }
 
-  /// Send raw bytes (PCM) to server
   static void sendAudioChunk(List<int> bytes) {
     if (_channel == null) {
       transcriptStream.add('[ws] not connected, cannot send chunk');

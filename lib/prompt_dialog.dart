@@ -10,13 +10,13 @@ Future<void> showWsPromptDialog(BuildContext context) async {
     context: context,
     builder: (ctx) {
       return AlertDialog(
-        title: Text('Set WebSocket URL'),
+        title: const Text('Set WebSocket URL'),
         content: Form(
           key: formKey,
           child: TextFormField(
             controller: controller,
             autofocus: true,
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               hintText: 'e.g. ws://your-ngrok-url/live or https://.../live',
             ),
             validator: (v) {
@@ -28,7 +28,7 @@ Future<void> showWsPromptDialog(BuildContext context) async {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -38,14 +38,13 @@ Future<void> showWsPromptDialog(BuildContext context) async {
                 try {
                   await Api.connect(url);
                 } catch (e) {
-                  // If connect fails, show a snackbar
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Connect failed: $e')),
                   );
                 }
               }
             },
-            child: Text('Connect'),
+            child: const Text('Connect'),
           ),
         ],
       );
