@@ -3,8 +3,9 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_sound/flutter_sound.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:record/record.dart'; // v5.1.2
+
 import 'api.dart';
 import 'prompt_dialog.dart';
 
@@ -32,40 +33,65 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final AudioRecorder _recorder = AudioRecorder(); // ✅ concrete recorder
+  // flutter_sound recorder
+  late final FlutterSoundRecorder _recorder;
+
+  // stream controller used by flutter_sound to push audio Food objects
+  StreamController<Uint8List>? _audioController;
+  StreamSubscription<Uint8List>? _audioSub;
+
+  // UI / transcript
   final ScrollController _scrollController = ScrollController();
   final List<String> _lines = [];
   StreamSubscription<String>? _wsSub;
-  StreamSubscription<Uint8List>? _micSub;
+
   bool _isRecording = false;
 
   @override
   void initState() {
     super.initState();
-    // Listen to transcript stream from Api
+    _recorder = FlutterSoundRecorder();
+
+    // initialize recorder (open) early so "must be initialized" doesn't appear
+    _openRecorder();
+
+    // subscribe to transcript stream provided by your Api class
     _wsSub = Api.transcriptStream.stream.listen((msg) {
-      setState(() {
-        _lines.add(msg);
-      });
+      setState(() => _lines.add(msg));
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
       });
     });
+  }
+
+  Future<void> _openRecorder() async {
+    try {
+      await _recorder.openRecorder();
+      // on some platforms you might need permission first; we'll request permission when starting
+    } catch (e) {
+      Api.transcriptStream.add('[mic] recorder init failed: $e');
+    }
   }
 
   @override
   void dispose() {
     _wsSub?.cancel();
-    _micSub?.cancel();
+    _audioSub?.cancel();
+    _audioController?.close();
+    _recorder.closeRecorder();
     _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _openWsPrompt() async {
+    // This shows the existing dialog in prompt_dialog.dart which already calls Api.connect
     await showWsPromptDialog(context);
   }
 
   Future<void> _startRecording() async {
+    // ask permission
     final status = await Permission.microphone.request();
     if (!status.isGranted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -74,39 +100,61 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    // require websocket URL (Api.currentUrl is set by prompt dialog / Api.connect)
     if (Api.currentUrl == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please set websocket URL first')),
-      );
-      return;
+      // open the prompt to set URL
+      await showWsPromptDialog(context);
+      if (Api.currentUrl == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please set websocket URL first')),
+        );
+        return;
+      }
     }
 
     try {
-      final stream = await _recorder.startStream(
-        const RecordConfig(
-          encoder: AudioEncoder.pcm16bits, // raw PCM
-          sampleRate: 16000,
-          numChannels: 1,
-        ),
-      );
+      // create controller and subscription that will receive Food objects from flutter_sound
+    _audioController = StreamController<Uint8List>();
+    _audioSub = _audioController!.stream.listen((bytes) {
+      if (bytes.isNotEmpty) {
+        Api.sendAudioChunk(bytes);
+      }
+    }, onError: (e) {
+      Api.transcriptStream.add('[mic] audio stream error: $e');
+    });
 
-      _micSub = stream.listen((bytes) {
-        if (bytes.isNotEmpty) {
-          Api.sendAudioChunk(Uint8List.fromList(bytes));
-        }
-      });
+
+      // start recorder -> send PCM16 to the stream controller sink
+    await _recorder.startRecorder(
+      toStream: _audioController!.sink,
+      codec: Codec.pcm16, // raw PCM
+      sampleRate: 16000,
+      numChannels: 1,
+    );
+
 
       setState(() => _isRecording = true);
       Api.transcriptStream.add('[mic] recording started');
     } catch (e) {
       Api.transcriptStream.add('[mic] start failed: $e');
+      // cleanup on failure
+      await _audioSub?.cancel();
+      _audioSub = null;
+      await _audioController?.close();
+      _audioController = null;
     }
   }
 
   Future<void> _stopRecording() async {
     try {
-      await _recorder.stop();
-      await _micSub?.cancel();
+      if (_recorder.isRecording) {
+        await _recorder.stopRecorder();
+      }
+      await _audioSub?.cancel();
+      _audioSub = null;
+      await _audioController?.close();
+      _audioController = null;
+
       setState(() => _isRecording = false);
       Api.transcriptStream.add('[mic] recording stopped');
     } catch (e) {
@@ -156,10 +204,7 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'WebSocket: $connectedUrl',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
+            Text('WebSocket: $connectedUrl', style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Expanded(
               child: Container(
@@ -182,20 +227,14 @@ class _HomePageState extends State<HomePage> {
             Row(
               children: [
                 ElevatedButton(
-                  onPressed: () {
-                    setState(() => _lines.clear());
-                  },
+                  onPressed: () => setState(() => _lines.clear()),
                   child: const Text('Clear'),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () {
-                    final text = _lines.join('\n');
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Transcript copied (not implemented)'),
-                      ),
-                    );
+                    // TODO: implement copy/share if needed
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Transcript copied (not implemented)')));
                   },
                   child: const Text('Copy'),
                 ),
