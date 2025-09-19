@@ -5,14 +5,13 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:typed_data';
-import 'package:flutter_audio_capture/flutter_audio_capture.dart';
-import 'package:permission_handler/permission_handler.dart';
-
+import 'package:record/record.dart';
 import 'api.dart';
 import 'prompt_dialog.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  
   runApp(const MyApp());
 }
 
@@ -35,7 +34,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final FlutterAudioCapture _audioRecorder = FlutterAudioCapture();
+  final AudioRecorder _recorder = AudioRecorder();
   final ScrollController _scrollController = ScrollController();
   final List<String> _lines = [];
   StreamSubscription<String>? _wsSub;
@@ -72,6 +71,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _startRecording() async {
     final status = await Permission.microphone.request();
+
     if (!status.isGranted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Microphone permission denied')),
@@ -87,12 +87,19 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
-      await _audioRecorder.start(
-        listener,
-        onError,
-        sampleRate: 16000,
-        bufferSize: 3000,
+      final stream = await _recorder.startStream(
+        const RecordConfig(
+          encoder: AudioEncoder.pcm16bits, // raw PCM
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
       );
+
+      _micSub = stream.listen((bytes) {
+        if (bytes.isNotEmpty) {
+          Api.sendAudioChunk(Uint8List.fromList(bytes));
+        }
+      });
 
       setState(() => _isRecording = true);
       Api.transcriptStream.add('[mic] recording started');
@@ -101,9 +108,11 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+
   Future<void> _stopRecording() async {
     try {
-      await _audioRecorder.stop();
+      await _recorder.stop();
+      await _micSub?.cancel();
       setState(() => _isRecording = false);
       Api.transcriptStream.add('[mic] recording stopped');
     } catch (e) {
