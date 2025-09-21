@@ -1,5 +1,6 @@
 // lib/main.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -56,14 +57,46 @@ class _HomePageState extends State<HomePage> {
     _openRecorder();
 
     // subscribe to transcript stream provided by your Api class
+    // _wsSub = Api.transcriptStream.stream.listen((msg) {
+    //   setState(() => _lines.add(msg));
+    //   WidgetsBinding.instance.addPostFrameCallback((_) {
+    //     if (_scrollController.hasClients) {
+    //       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    //     }
+    //   });
+    // });
+
+
+    // _wsSub = Api.transcriptStream.stream.listen((msg) {
+    //   if (msg.trim().isEmpty) return; // skip blank outputs
+    //   setState(() => _lines.add(msg));
+    //   WidgetsBinding.instance.addPostFrameCallback((_) {
+    //     if (_scrollController.hasClients) {
+    //       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+    //     }
+    //   });
+    // });
+
     _wsSub = Api.transcriptStream.stream.listen((msg) {
-      setState(() => _lines.add(msg));
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      try {
+        final data = jsonDecode(msg);
+        final finalText = data['final'];
+        if (finalText != null && finalText.toString().trim().isNotEmpty) {
+          setState(() => _lines.add(finalText.toString().trim()));
+
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollController.hasClients) {
+              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+            }
+          });
         }
-      });
+      } catch (_) {
+        // If not JSON (e.g. logs), ignore
+      }
     });
+
+
+
   }
 
   Future<void> _openRecorder() async {
