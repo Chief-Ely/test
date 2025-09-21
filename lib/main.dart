@@ -1,7 +1,7 @@
 // lib/main.dart
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
@@ -77,22 +77,49 @@ class _HomePageState extends State<HomePage> {
     //   });
     // });
 
+    // subscribe to transcript stream provided by your Api class
     _wsSub = Api.transcriptStream.stream.listen((msg) {
-      try {
-        final data = jsonDecode(msg);
-        final finalText = data['final'];
-        if (finalText != null && finalText.toString().trim().isNotEmpty) {
-          setState(() => _lines.add(finalText.toString().trim()));
+      // ignore empty strings quickly
+      if (msg.trim().isEmpty) return;
 
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_scrollController.hasClients) {
-              _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-            }
-          });
+      try {
+        final parsed = jsonDecode(msg);
+
+        // If parsed is a Map, check known keys
+        if (parsed is Map) {
+          if (parsed.containsKey('final')) {
+            final text = (parsed['final'] ?? '').toString().trim();
+            if (text.isNotEmpty) setState(() => _lines.add('[final] $text'));
+          } else if (parsed.containsKey('new')) {
+            final text = (parsed['new'] ?? '').toString().trim();
+            if (text.isNotEmpty) setState(() => _lines.add(text));
+          } else if (parsed.containsKey('partial')) {
+            final text = (parsed['partial'] ?? '').toString().trim();
+            if (text.isNotEmpty) setState(() => _lines.add(text));
+          } else if (parsed.containsKey('text')) {
+            final text = (parsed['text'] ?? '').toString().trim();
+            if (text.isNotEmpty) setState(() => _lines.add('[final] $text'));
+          } else {
+            final text = parsed.toString().trim();
+            if (text.isNotEmpty) setState(() => _lines.add(text));
+          }
+        } else {
+          // parsed JSON that's not a map (e.g., a string or list)
+          final text = parsed.toString().trim();
+          if (text.isNotEmpty) setState(() => _lines.add(text));
         }
       } catch (_) {
-        // If not JSON (e.g. logs), ignore
+        // not JSON — treat msg as a plain string
+        final text = msg.trim();
+        if (text.isNotEmpty) setState(() => _lines.add(text));
       }
+
+      // auto-scroll
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        }
+      });
     });
 
 
