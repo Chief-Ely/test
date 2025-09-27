@@ -1,7 +1,7 @@
 // lib/main.dart
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_sound/flutter_sound.dart';
@@ -37,7 +37,7 @@ class _HomePageState extends State<HomePage> {
   // flutter_sound recorder
   late final FlutterSoundRecorder _recorder;
 
-  // stream controller used by flutter_sound to push audio Food objects
+  // stream controller used by flutter_sound to push audio Uint8List objects
   StreamController<Uint8List>? _audioController;
   StreamSubscription<Uint8List>? _audioSub;
 
@@ -57,73 +57,59 @@ class _HomePageState extends State<HomePage> {
     _openRecorder();
 
     // subscribe to transcript stream provided by your Api class
-    // _wsSub = Api.transcriptStream.stream.listen((msg) {
-    //   setState(() => _lines.add(msg));
-    //   WidgetsBinding.instance.addPostFrameCallback((_) {
-    //     if (_scrollController.hasClients) {
-    //       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-    //     }
-    //   });
-    // });
-
-
-    // _wsSub = Api.transcriptStream.stream.listen((msg) {
-    //   if (msg.trim().isEmpty) return; // skip blank outputs
-    //   setState(() => _lines.add(msg));
-    //   WidgetsBinding.instance.addPostFrameCallback((_) {
-    //     if (_scrollController.hasClients) {
-    //       _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-    //     }
-    //   });
-    // });
-
-    // subscribe to transcript stream provided by your Api class
+    // GOAL: Only show final results in UI, formatted like: [final] Hello world!
     _wsSub = Api.transcriptStream.stream.listen((msg) {
-      // ignore empty strings quickly
+      // quick guard
       if (msg.trim().isEmpty) return;
 
+      // Try to parse JSON messages first (we expect server often sends JSON like {"final":"..."}).
+      bool added = false;
       try {
         final parsed = jsonDecode(msg);
 
-        // If parsed is a Map, check known keys
-        if (parsed is Map) {
+        // Only accept Map messages and specifically 'final' or 'text' keys -> treat as final
+        if (parsed is Map<String, dynamic>) {
+          String? finalText;
+
+          // prefer explicit 'final' key if present
           if (parsed.containsKey('final')) {
-            final text = (parsed['final'] ?? '').toString().trim();
-            if (text.isNotEmpty) setState(() => _lines.add('[final] $text'));
-          } else if (parsed.containsKey('new')) {
-            final text = (parsed['new'] ?? '').toString().trim();
-            if (text.isNotEmpty) setState(() => _lines.add(text));
-          } else if (parsed.containsKey('partial')) {
-            final text = (parsed['partial'] ?? '').toString().trim();
-            if (text.isNotEmpty) setState(() => _lines.add(text));
+            finalText = (parsed['final'] ?? '').toString().trim();
           } else if (parsed.containsKey('text')) {
-            final text = (parsed['text'] ?? '').toString().trim();
-            if (text.isNotEmpty) setState(() => _lines.add('[final] $text'));
-          } else {
-            final text = parsed.toString().trim();
-            if (text.isNotEmpty) setState(() => _lines.add(text));
+            // some backends send {"text": "..."}
+            finalText = (parsed['text'] ?? '').toString().trim();
           }
-        } else {
-          // parsed JSON that's not a map (e.g., a string or list)
-          final text = parsed.toString().trim();
-          if (text.isNotEmpty) setState(() => _lines.add(text));
+
+          if (finalText != null && finalText.isNotEmpty) {
+            setState(() => _lines.add('[final] $finalText'));
+            added = true;
+          }
         }
       } catch (_) {
-        // not JSON — treat msg as a plain string
-        final text = msg.trim();
-        if (text.isNotEmpty) setState(() => _lines.add(text));
+        // not JSON -> fall through and treat plain text
       }
 
-      // auto-scroll
+      if (!added) {
+        // Plain string handling:
+        final plain = msg.trim();
+
+        // Ignore internal log/debug messages that start with [ws], [mic], [error], etc.
+        final lower = plain.toLowerCase();
+        if (plain.startsWith('[') || lower.startsWith('[ws]') || lower.startsWith('[mic]') || lower.startsWith('[error]')) {
+          // ignore
+        } else {
+          // Treat plain strings as final transcription outputs (if they are not debug)
+          // e.g., Api may forward final 'text' directly as a plain string
+          setState(() => _lines.add('[final] $plain'));
+        }
+      }
+
+      // auto-scroll to bottom
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
           _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         }
       });
     });
-
-
-
   }
 
   Future<void> _openRecorder() async {
@@ -173,25 +159,23 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
-      // create controller and subscription that will receive Food objects from flutter_sound
-    _audioController = StreamController<Uint8List>();
-    _audioSub = _audioController!.stream.listen((bytes) {
-      if (bytes.isNotEmpty) {
-        Api.sendAudioChunk(bytes);
-      }
-    }, onError: (e) {
-      Api.transcriptStream.add('[mic] audio stream error: $e');
-    });
-
+      // create controller and subscription that will receive Uint8List chunks
+      _audioController = StreamController<Uint8List>();
+      _audioSub = _audioController!.stream.listen((bytes) {
+        if (bytes.isNotEmpty) {
+          Api.sendAudioChunk(bytes);
+        }
+      }, onError: (e) {
+        Api.transcriptStream.add('[mic] audio stream error: $e');
+      });
 
       // start recorder -> send PCM16 to the stream controller sink
-    await _recorder.startRecorder(
-      toStream: _audioController!.sink,
-      codec: Codec.pcm16, // raw PCM
-      sampleRate: 16000,
-      numChannels: 1,
-    );
-
+      await _recorder.startRecorder(
+        toStream: _audioController!.sink,
+        codec: Codec.pcm16, // raw PCM
+        sampleRate: 16000,
+        numChannels: 1,
+      );
 
       setState(() => _isRecording = true);
       Api.transcriptStream.add('[mic] recording started');
@@ -240,7 +224,7 @@ class _HomePageState extends State<HomePage> {
     final connectedUrl = Api.currentUrl ?? '[not connected]';
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Live Mic -> WS'),
+        title: const Text('Live Mic -> WebSocket'),
         actions: [
           IconButton(
             icon: const Icon(Icons.link),
@@ -293,6 +277,7 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () {
+                    final text = _lines.join('\n');
                     // TODO: implement copy/share if needed
                     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Transcript copied (not implemented)')));
                   },
